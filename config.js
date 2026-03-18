@@ -8,7 +8,7 @@ const BCHAT_CONFIG = {
   SUPABASE_ANON:   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVtZXFlc29lcGlmbG5qbnlmc3NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4MjMwMjAsImV4cCI6MjA4OTM5OTAyMH0.T6m2hi0XoO5NAl3DRaBSG36vP8JM3mgIldNHgYufm1g',
   GROQ_API_KEY:    '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',
   GROQ_MODEL:      'qwen/qwen3-32b',               // or any Groq model
-  BASE_URL:        'https://yourdomain.com',       // where the app is hosted
+  BASE_URL:        'https://chatpro-amber.vercel.app/',       // where the app is hosted
   APP_NAME:        'B-Chat Global',
   DEFAULT_COLOR:   '#6366f1',
 };
