@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>B-Chat Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <style>
+    body { background: #07080f; color: #e2e8f0; font-family: 'DM Sans', sans-serif; }
+    .card { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); border-radius: 16px; padding: 1.5rem; }
+  </style>
+</head>
+<body class="p-6">
+  <h1 class="text-3xl font-bold mb-6">Admin Panel</h1>
+  <div class="grid grid-cols-4 gap-4 mb-6">
+    <div class="card"><div class="text-sm text-sub">Total Merchants</div><div class="text-2xl font-bold" id="totalMerchants">0</div></div>
+    <div class="card"><div class="text-sm text-sub">Active Subscriptions</div><div class="text-2xl font-bold" id="activeSubs">0</div></div>
+    <div class="card"><div class="text-sm text-sub">Total Messages</div><div class="text-2xl font-bold" id="totalMessages">0</div></div>
+    <div class="card"><div class="text-sm text-sub">Codes Generated</div><div class="text-2xl font-bold" id="totalCodes">0</div></div>
+  </div>
+
+  <div class="card mb-6">
+    <h2 class="text-xl font-bold mb-4">Generate License Keys</h2>
+    <div class="flex gap-4 items-end">
+      <div>
+        <label class="block text-sub mb-1">Messages per key</label>
+        <input type="number" id="msgAmount" value="1000" class="bg-black/30 border border-white/10 rounded px-3 py-2" />
+      </div>
+      <div>
+        <label class="block text-sub mb-1">Number of keys</label>
+        <input type="number" id="keyCount" value="1" min="1" max="50" class="bg-black/30 border border-white/10 rounded px-3 py-2" />
+      </div>
+      <button onclick="generateKeys()" class="bg-indigo-600 px-4 py-2 rounded text-white">Generate</button>
+    </div>
+    <div id="generatedKeys" class="mt-4 grid grid-cols-3 gap-2"></div>
+  </div>
+
+  <div class="card">
+    <h2 class="text-xl font-bold mb-4">Activation Codes</h2>
+    <table class="w-full">
+      <thead><tr><th>Code</th><th>Messages</th><th>Status</th><th>Used By</th></tr></thead>
+      <tbody id="codesTable"></tbody>
+    </table>
+  </div>
+
+  <script>
+    const sb = createSupabase();
+    let adminId = null;
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) { window.location.href = 'index.html'; return; }
+      adminId = session.user.id;
+      const { data: profile } = await sb.from('profiles').select('is_admin').eq('id', adminId).single();
+      if (!profile?.is_admin) { document.body.innerHTML = '<div class="p-10 text-center">Access denied.</div>'; return; }
+      loadStats();
+      loadCodes();
+    });
+
+    async function loadStats() {
+      const { data: profs } = await sb.from('profiles').select('*').neq('is_admin', true);
+      const now = new Date();
+      const active = profs.filter(p => new Date(p.sub_end_date) > now && p.message_balance > 0).length;
+      const totalMsgs = profs.reduce((s,p) => s + (p.message_balance||0), 0);
+      const { count: codeCount } = await sb.from('license_keys').select('*', { count:'exact', head:true });
+      document.getElementById('totalMerchants').textContent = profs.length;
+      document.getElementById('activeSubs').textContent = active;
+      document.getElementById('totalMessages').textContent = totalMsgs.toLocaleString();
+      document.getElementById('totalCodes').textContent = codeCount || 0;
+    }
+
+    async function loadCodes() {
+      const { data } = await sb.from('license_keys').select('*, used_by(id, store_name)').order('created_at', { ascending: false });
+      const tbody = document.getElementById('codesTable');
+      tbody.innerHTML = (data || []).map(k => `
+        <tr>
+          <td class="py-2">${k.code}</td>
+          <td>${k.message_amount}</td>
+          <td>${k.is_used ? 'Used' : 'Available'}</td>
+          <td>${k.used_by?.store_name || ''}</td>
+        </tr>
+      `).join('');
+    }
+
+    function generateRandomCode() {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      return Array.from({ length: 16 }, () => chars[Math.floor(Math.random()*chars.length)]).join('');
+    }
+
+    async function generateKeys() {
+      const amount = parseInt(document.getElementById('msgAmount').value) || 1000;
+      const count = parseInt(document.getElementById('keyCount').value) || 1;
+      const codes = [];
+      for (let i = 0; i < count; i++) {
+        codes.push({ code: generateRandomCode(), message_amount: amount, created_by: adminId });
+      }
+      const { data, error } = await sb.from('license_keys').insert(codes).select();
+      if (error) { alert(error.message); return; }
+      const container = document.getElementById('generatedKeys');
+      container.innerHTML = (data || codes).map(c => `<div class="bg-white/5 p-2 rounded text-center font-mono text-sm">${c.code}</div>`).join('');
+      loadCodes();
+      loadStats();
+    }
+  </script>
+</body>
+</html>
