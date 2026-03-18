@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>B-Chat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet"/>
+  <style>
+    :root { --primary: #6366f1; }
+    body { margin:0; background: #07080f; color: #e2e8f0; font-family: 'Cairo', sans-serif; height: 100vh; display: flex; flex-direction: column; }
+    #messages { flex:1; overflow-y: auto; padding: 1rem; }
+    .bubble { padding: .6rem 1rem; border-radius: 18px; margin-bottom: .4rem; max-width: 80%; word-break: break-word; }
+    .bubble.bot { background: #1e293b; align-self: flex-start; }
+    .bubble.user { background: var(--primary); color: white; align-self: flex-end; }
+    .input-area { display: flex; padding: .8rem; background: #0f172a; border-top: 1px solid rgba(255,255,255,.1); }
+    textarea { flex:1; background: #1e293b; border: none; border-radius: 24px; padding: .8rem 1.2rem; color: #fff; resize: none; }
+    .send-btn { width: 46px; height: 46px; border-radius: 50%; background: var(--primary); margin-left: .5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  </style>
+</head>
+<body>
+  <div id="welcome" style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; padding:2rem; text-align:center;">
+    <div id="storeLogo" class="w-20 h-20 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 mb-4"></div>
+    <h1 id="storeName" class="text-2xl font-bold mb-2">Loading...</h1>
+    <p id="storeBio" class="text-sub mb-6"></p>
+    <input id="customerName" class="bg-white/10 border border-white/20 rounded-lg px-4 py-2 mb-4 w-64" placeholder="Your name (optional)"/>
+    <button onclick="startChat()" class="bg-gradient-to-r from-indigo-500 to-purple-500 px-6 py-2 rounded-lg text-white">Start Chat</button>
+  </div>
+
+  <div id="chat" style="display:none; flex-direction:column; height:100%;">
+    <div class="bg-surface p-3 flex items-center gap-2 border-b border-white/10">
+      <div id="chatAvatar" class="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500"></div>
+      <div><div id="chatBotName" class="font-bold"></div><div class="text-xs text-green-400">● Online</div></div>
+    </div>
+    <div id="messages"></div>
+    <div class="input-area">
+      <textarea id="msgInput" rows="1" placeholder="Type a message..."></textarea>
+      <div class="send-btn" onclick="sendMessage()">➤</div>
+    </div>
+  </div>
+
+  <script>
+    const sb = createSupabase();
+    let merchant = null;
+    let customerName = '';
+    let convId = null;
+    let chatHistory = [];
+    let orderState = 'idle'; // idle, collecting, confirming, saved
+    let pendingOrder = { name:'', phone:'', address:'', items:[] };
+    let leadId = null;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const merchantId = urlParams.get('id');
+    if (!merchantId) { document.body.innerHTML = 'Invalid link'; } else { loadMerchant(); }
+
+    async function loadMerchant() {
+      const { data, error } = await sb.from('profiles').select('*').eq('id', merchantId).single();
+      if (error) { document.body.innerHTML = 'Store not found'; return; }
+      merchant = data;
+      document.getElementById('storeName').textContent = merchant.store_name || 'Store';
+      document.getElementById('storeBio').textContent = merchant.bio || '';
+      if (merchant.logo_url) {
+        document.getElementById('storeLogo').innerHTML = `<img src="${merchant.logo_url}" class="w-full h-full rounded-full object-cover"/>`;
+        document.getElementById('chatAvatar').innerHTML = `<img src="${merchant.logo_url}" class="w-full h-full rounded-full object-cover"/>`;
+      }
+      document.getElementById('chatBotName').textContent = merchant.bot_name || merchant.store_name;
+      document.documentElement.style.setProperty('--primary', merchant.theme_color || '#6366f1');
+    }
+
+    async function startChat() {
+      customerName = document.getElementById('customerName').value.trim() || 'Customer';
+      document.getElementById('welcome').style.display = 'none';
+      document.getElementById('chat').style.display = 'flex';
+      // Create conversation
+      const { data } = await sb.from('conversations').insert({
+        merchant_id: merchant.id,
+        customer_data: { name: customerName, lang: getLang() }
+      }).select().single();
+      convId = data.id;
+
+      // Send greeting
+      const greeting = `👋 Hello ${customerName}! How can I help you today?`;
+      appendMessage('bot', greeting);
+      chatHistory.push({ role: 'assistant', content: greeting });
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('msgInput');
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      appendMessage('user', text);
+      chatHistory.push({ role: 'user', content: text });
+
+      // Check for purchase intent
+      const lower = text.toLowerCase();
+      const buyKeywords = ['buy','order','شراء','بغيت','حاب','acheter','comprar','kaufen','köpa'];
+      if (buyKeywords.some(k => lower.includes(k))) {
+        if (orderState === 'idle') {
+          orderState = 'collecting';
+          // Create lead
+          const { data: lead } = await sb.from('leads').insert({
+            merchant_id: merchant.id,
+            name: customerName,
+            items: []
+          }).select().single();
+          leadId = lead.id;
+          appendMessage('bot', 'Great! Could you please tell me your full name?');
+          chatHistory.push({ role: 'assistant', content: 'Great! Could you please tell me your full name?' });
+          return;
+        }
+      }
+
+      // Order collection state machine
+      if (orderState === 'collecting') {
+        if (!pendingOrder.name) {
+          pendingOrder.name = text;
+          await updateLead({ name: text });
+          appendMessage('bot', 'Thank you! Now your phone number?');
+          chatHistory.push({ role: 'assistant', content: 'Thank you! Now your phone number?' });
+          return;
+        } else if (!pendingOrder.phone) {
+          pendingOrder.phone = text;
+          await updateLead({ phone: text });
+          appendMessage('bot', 'Perfect! And your delivery address?');
+          chatHistory.push({ role: 'assistant', content: 'Perfect! And your delivery address?' });
+          return;
+        } else if (!pendingOrder.address) {
+          pendingOrder.address = text;
+          await updateLead({ address: text });
+          // Assume we have items (maybe from context)
+          // For demo, we'll create a mock item
+          const products = merchant.structured_data?.products || [];
+          const item = products.length ? products[0] : { name: 'Product', price: 100 };
+          pendingOrder.items.push(item);
+          orderState = 'confirming';
+          const summary = `Thank you! Here's your order summary:\n${item.name} — ${item.price} MAD\nTotal: ${item.price} MAD\nPlease confirm with "yes" or "confirm".`;
+          appendMessage('bot', summary);
+          chatHistory.push({ role: 'assistant', content: summary });
+          return;
+        }
+      }
+
+      if (orderState === 'confirming') {
+        if (text.toLowerCase().includes('yes') || text.toLowerCase().includes('confirm') || text.includes('نعم')) {
+          // Save order
+          const order = {
+            merchant_id: merchant.id,
+            conversation_id: convId,
+            customer_name: pendingOrder.name,
+            customer_phone: pendingOrder.phone,
+            customer_address: pendingOrder.address,
+            items: pendingOrder.items,
+            total_price: pendingOrder.items.reduce((s,i)=>s+i.price,0),
+            currency: 'MAD',
+            status: 'pending'
+          };
+          const { data: saved } = await sb.from('orders').insert(order).select().single();
+          // Mark lead as converted
+          if (leadId) await sb.from('leads').update({ converted: true }).eq('id', leadId);
+          appendMessage('bot', '✅ Order confirmed! We will contact you soon.');
+          // Send email notification if merchant has Resend configured
+          if (merchant.resend_api_key && merchant.notify_email) {
+            await sendEmailNotification(saved);
+          }
+          orderState = 'saved';
+        } else {
+          appendMessage('bot', 'Order cancelled. Anything else I can help with?');
+          orderState = 'idle';
+        }
+        return;
+      }
+
+      // Otherwise, pass to AI
+      const reply = await callGroq(text);
+      appendMessage('bot', reply);
+      chatHistory.push({ role: 'assistant', content: reply });
+    }
+
+    async function updateLead(fields) {
+      if (leadId) await sb.from('leads').update(fields).eq('id', leadId);
+    }
+
+    async function callGroq(userMsg) {
+      const systemPrompt = buildSystemPrompt();
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        ...chatHistory.slice(-10)
+      ];
+      try {
+        const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BCHAT_CONFIG.GROQ_API_KEY}` },
+          body: JSON.stringify({ model: BCHAT_CONFIG.GROQ_MODEL, messages, max_tokens: 500 })
+        });
+        const data = await resp.json();
+        return data.choices?.[0]?.message?.content || 'Sorry, I had an error.';
+      } catch(e) {
+        return 'Connection error.';
+      }
+    }
+
+    function buildSystemPrompt() {
+      const sd = merchant.structured_data || {};
+      const products = sd.products || [];
+      const shipping = sd.shipping_zones || [];
+      let prompt = `You are a sales assistant for ${merchant.store_name}. `;
+      prompt += `Your goal is to help customers and collect orders. `;
+      prompt += `When the customer wants to buy, ask for name, phone, and address. `;
+      prompt += `Available products: ` + products.map(p => `${p.name} (${p.price} MAD)`).join(', ');
+      if (shipping.length) prompt += ` Shipping costs: ` + shipping.map(s => `${s.city}: ${s.price} MAD`).join(', ');
+      prompt += ` Keep responses friendly and concise.`;
+      return prompt;
+    }
+
+    function appendMessage(role, text) {
+      const div = document.createElement('div');
+      div.className = `bubble ${role}`;
+      div.textContent = text;
+      document.getElementById('messages').appendChild(div);
+      document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+    }
+
+    async function sendEmailNotification(order) {
+      const emailHtml = `<h2>New Order from ${order.customer_name}</h2><p>Phone: ${order.customer_phone}</p><p>Address: ${order.customer_address}</p><p>Total: ${order.total_price} MAD</p>`;
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${merchant.resend_api_key}`
+          },
+          body: JSON.stringify({
+            from: merchant.resend_from || 'B-Chat <orders@bchat.ma>',
+            to: [merchant.notify_email],
+            subject: `New Order from ${order.customer_name}`,
+            html: emailHtml
+          })
+        });
+      } catch(e) { console.error('Email failed', e); }
+    }
+
+    function getLang() {
+      return localStorage.getItem('bchat_lang') || 'en';
+    }
+  </script>
+</body>
+</html>
