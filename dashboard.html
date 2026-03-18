@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>B-Chat Global — Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="config.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg: #07080f; --surface: rgba(255,255,255,.04); --border: rgba(255,255,255,.08);
+      --accent: #6366f1; --accent2: #a855f7; --text: #e2e8f0; --text-sub: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    h1,h2,h3 { font-family: 'Syne', sans-serif; }
+    .glass { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); backdrop-filter: blur(12px); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 1.5rem; }
+    .lock-overlay { position: fixed; inset:0; background: rgba(0,0,0,.95); backdrop-filter: blur(20px); z-index: 999; display: none; align-items: center; justify-content: center; }
+    .lock-overlay.show { display: flex; }
+    .license-input { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.15); border-radius: 12px; padding: 1rem; width: 300px; color: #fff; font-size: 1.2rem; letter-spacing: 4px; text-align: center; }
+    .live-preview { position: fixed; bottom: 20px; right: 20px; width: 340px; height: 500px; border-radius: 24px; border: 1px solid var(--border); overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.6); z-index: 100; }
+    .live-preview iframe { width: 100%; height: 100%; border: none; background: var(--bg); }
+  </style>
+</head>
+<body>
+
+<div class="lock-overlay" id="lockScreen">
+  <div class="text-center">
+    <div class="text-6xl mb-4">🔒</div>
+    <h2 class="text-2xl font-bold mb-2">Subscription Ended</h2>
+    <p class="text-sub mb-6">Enter a 16‑digit license key to reactivate</p>
+    <input type="text" id="licenseKey" class="license-input mb-4" maxlength="19" placeholder="XXXX-XXXX-XXXX-XXXX" oninput="formatLicense(this)"/>
+    <button onclick="redeemLicense()" class="btn" style="background: linear-gradient(135deg,#6366f1,#a855f7); color:#fff; padding:.8rem 2rem; border-radius:12px;">Redeem</button>
+  </div>
+</div>
+
+<div class="live-preview" id="livePreview">
+  <iframe id="previewFrame" src="about:blank"></iframe>
+</div>
+
+<div class="app" style="display:flex; min-height:100vh;">
+  <!-- Sidebar (simplified) -->
+  <aside class="w-64 glass p-4">
+    <h2 class="text-xl font-black mb-8 bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">B-Chat</h2>
+    <nav>
+      <div class="nav-item active" onclick="showTab('setup')">⚙️ Setup</div>
+      <div class="nav-item" onclick="showTab('sales')">📦 Sales & Recovery</div>
+      <div class="nav-item" onclick="showTab('stats')">📊 Growth Stats</div>
+      <div class="nav-item" onclick="showTab('advisor')">🧠 AI Advisor</div>
+    </nav>
+    <div class="mt-8 text-sm text-sub" id="subInfo">Loading...</div>
+  </aside>
+
+  <main class="flex-1 p-6">
+    <!-- Tab: Setup -->
+    <div id="tabSetup" class="tab-pane active">
+      <div class="card">
+        <h3 class="text-lg font-bold mb-4">Store Setup</h3>
+        <input class="form-input mb-3" type="text" id="storeName" placeholder="Store Name"/>
+        <input class="form-input mb-3" type="text" id="botName" placeholder="Bot Name"/>
+        <input class="form-input mb-3" type="text" id="bio" placeholder="Store Description"/>
+        <label class="block text-sub mb-2">Brand Color</label>
+        <input type="color" id="themeColor" value="#6366f1" class="mb-4"/>
+        <label class="block text-sub mb-2">Product Sync URL (JSON/CSV)</label>
+        <input class="form-input mb-3" type="url" id="inventoryUrl" placeholder="https://..."/>
+        <button onclick="syncInventory()" class="btn-primary mb-2">Sync Now</button>
+        <button onclick="saveSetup()" class="btn-primary">Save Changes</button>
+      </div>
+    </div>
+
+    <!-- Tab: Sales & Recovery -->
+    <div id="tabSales" class="tab-pane">
+      <div class="grid grid-cols-2 gap-4">
+        <div class="card">
+          <h4 class="font-bold mb-3">✅ Successful Orders</h4>
+          <table class="w-full text-sm">
+            <thead><tr><th>Name</th><th>Total</th><th>Status</th></tr></thead>
+            <tbody id="ordersTable"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h4 class="font-bold mb-3">🛒 Abandoned Carts</h4>
+          <table class="w-full text-sm">
+            <thead><tr><th>Name</th><th>Phone</th><th>Items</th></tr></thead>
+            <tbody id="leadsTable"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Growth Stats -->
+    <div id="tabStats" class="tab-pane">
+      <div class="card">
+        <h3 class="text-lg font-bold mb-4">Revenue (Last 30 Days)</h3>
+        <canvas id="revenueChart" height="200"></canvas>
+      </div>
+      <div class="card mt-4">
+        <h3 class="text-lg font-bold mb-4">Sales by Language</h3>
+        <canvas id="langChart" height="200"></canvas>
+      </div>
+    </div>
+
+    <!-- Tab: AI Advisor -->
+    <div id="tabAdvisor" class="tab-pane">
+      <div class="card">
+        <div class="flex gap-2 mb-4">
+          <textarea id="advisorInput" class="flex-1 p-2 rounded bg-white/10" placeholder="Ask for business advice..."></textarea>
+          <button onclick="askAdvisor()" class="btn-primary">Ask</button>
+        </div>
+        <div id="advisorResponse" class="whitespace-pre-wrap text-sub"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+  const sb = createSupabase();
+  let userId = null;
+  let profile = null;
+  let revenueChart, langChart;
+
+  window.addEventListener('DOMContentLoaded', async () => {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { window.location.href = 'index.html'; return; }
+    userId = session.user.id;
+    await loadProfile();
+    checkLock();
+    setInterval(checkLock, 60000); // re-check every minute
+    loadOrders();
+    loadLeads();
+    loadCharts();
+    updatePreview();
+  });
+
+  async function loadProfile() {
+    const { data, error } = await sb.from('profiles').select('*').eq('id', userId).single();
+    if (error) { console.error(error); return; }
+    profile = data;
+    document.getElementById('storeName').value = profile.store_name || '';
+    document.getElementById('botName').value = profile.bot_name || '';
+    document.getElementById('bio').value = profile.bio || '';
+    document.getElementById('themeColor').value = profile.theme_color || '#6366f1';
+    document.getElementById('inventoryUrl').value = profile.inventory_url || '';
+    updateSubInfo();
+  }
+
+  function updateSubInfo() {
+    if (!profile) return;
+    const now = new Date();
+    const subEnd = new Date(profile.sub_end_date);
+    const days = Math.max(0, Math.ceil((subEnd - now) / 86400000));
+    document.getElementById('subInfo').innerHTML = `
+      <div>${profile.message_balance || 0} messages left</div>
+      <div>${days} days left</div>
+    `;
+  }
+
+  function checkLock() {
+    if (!profile) return;
+    const now = new Date();
+    const subEnd = new Date(profile.sub_end_date);
+    if (now > subEnd || (profile.message_balance || 0) <= 0) {
+      document.getElementById('lockScreen').classList.add('show');
+    } else {
+      document.getElementById('lockScreen').classList.remove('show');
+    }
+  }
+
+  function formatLicense(input) {
+    let v = input.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    if (v.length > 16) v = v.slice(0,16);
+    let parts = [];
+    for (let i=0; i<v.length; i+=4) parts.push(v.slice(i,i+4));
+    input.value = parts.join('-');
+  }
+
+  async function redeemLicense() {
+    const code = document.getElementById('licenseKey').value.replace(/-/g, '').toUpperCase();
+    if (code.length !== 16) { alert('Invalid code'); return; }
+    const { data: key, error } = await sb.from('license_keys').select('*').eq('code', code).eq('is_used', false).single();
+    if (error || !key) { alert('Invalid or already used key'); return; }
+    // Update key as used
+    await sb.from('license_keys').update({ is_used: true, used_by: userId, used_at: new Date().toISOString() }).eq('id', key.id);
+    // Extend subscription (add 30 days) and add messages
+    const now = new Date();
+    const currentEnd = new Date(profile.sub_end_date);
+    const newEnd = currentEnd > now ? new Date(currentEnd.setDate(currentEnd.getDate() + 30)) : new Date(now.setDate(now.getDate() + 30));
+    const newBalance = (profile.message_balance || 0) + key.message_amount;
+    await sb.from('profiles').update({ sub_end_date: newEnd.toISOString(), message_balance: newBalance }).eq('id', userId);
+    profile.sub_end_date = newEnd.toISOString();
+    profile.message_balance = newBalance;
+    updateSubInfo();
+    checkLock();
+    alert('License activated!');
+  }
+
+  function showTab(name) {
+    document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab' + name.charAt(0).toUpperCase() + name.slice(1)).classList.add('active');
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    event.target.classList.add('active');
+  }
+
+  async function syncInventory() {
+    const url = document.getElementById('inventoryUrl').value.trim();
+    if (!url) return;
+    // Fetch and parse (simplified)
+    try {
+      const resp = await fetch(url);
+      const text = await resp.text();
+      let products = [];
+      if (url.endsWith('.json')) {
+        const json = JSON.parse(text);
+        products = Array.isArray(json) ? json : (json.products || []);
+      } else { // assume CSV
+        const lines = text.split('\n').filter(l=>l.trim());
+        const headers = lines[0].split(',').map(h=>h.trim().toLowerCase());
+        const nameIdx = headers.findIndex(h=>h.includes('name'));
+        const priceIdx = headers.findIndex(h=>h.includes('price'));
+        if (nameIdx===-1) throw new Error('CSV must have "name" column');
+        for (let i=1; i<lines.length; i++) {
+          const cells = lines[i].split(',').map(c=>c.trim());
+          products.push({ name: cells[nameIdx], price: parseFloat(cells[priceIdx]) || 0, description: '' });
+        }
+      }
+      const sd = profile.structured_data || {};
+      sd.products = products;
+      await sb.from('profiles').update({ structured_data: sd, inventory_url: url }).eq('id', userId);
+      profile.structured_data = sd;
+      alert('Inventory synced!');
+    } catch(e) { alert('Sync failed: '+e.message); }
+  }
+
+  async function saveSetup() {
+    const updates = {
+      store_name: document.getElementById('storeName').value.trim(),
+      bot_name: document.getElementById('botName').value.trim(),
+      bio: document.getElementById('bio').value.trim(),
+      theme_color: document.getElementById('themeColor').value,
+    };
+    await sb.from('profiles').update(updates).eq('id', userId);
+    profile = { ...profile, ...updates };
+    alert('Saved!');
+    updatePreview();
+  }
+
+  function updatePreview() {
+    if (profile && profile.id) {
+      document.getElementById('previewFrame').src = `chat.html?id=${profile.id}&preview=1`;
+    }
+  }
+
+  async function loadOrders() {
+    const { data } = await sb.from('orders').select('*').eq('merchant_id', userId).order('created_at', { ascending: false }).limit(10);
+    const tbody = document.getElementById('ordersTable');
+    tbody.innerHTML = (data || []).map(o => `<tr><td>${o.customer_name}</td><td>${o.total_price} ${o.currency}</td><td>${o.status}</td></tr>`).join('');
+  }
+
+  async function loadLeads() {
+    const { data } = await sb.from('leads').select('*').eq('merchant_id', userId).eq('converted', false).order('created_at', { ascending: false }).limit(10);
+    const tbody = document.getElementById('leadsTable');
+    tbody.innerHTML = (data || []).map(l => `<tr><td>${l.name || '?'}</td><td>${l.phone || ''}</td><td>${l.items?.length || 0} items</td></tr>`).join('');
+  }
+
+  async function loadCharts() {
+    // Revenue chart
+    const orders = await sb.from('orders').select('*').eq('merchant_id', userId).eq('abandoned', false);
+    const last30 = (orders.data || []).filter(o => new Date(o.created_at) > new Date(Date.now() - 30*86400000));
+    const days = Array.from({length:30}, (_,i) => {
+      const d = new Date(); d.setDate(d.getDate() - 29 + i);
+      return d.toISOString().slice(0,10);
+    });
+    const revenueData = days.map(day => {
+      const total = last30.filter(o => o.created_at.slice(0,10) === day).reduce((s,o) => s + Number(o.total_price), 0);
+      return total;
+    });
+    const ctx1 = document.getElementById('revenueChart').getContext('2d');
+    revenueChart = new Chart(ctx1, {
+      type: 'line',
+      data: { labels: days.map(d=>d.slice(5)), datasets: [{ label: 'Revenue (MAD)', data: revenueData, borderColor: '#6366f1' }] }
+    });
+
+    // Language chart
+    const convs = await sb.from('conversations').select('customer_data').eq('merchant_id', userId);
+    const langs = (convs.data || []).map(c => c.customer_data?.lang || 'unknown');
+    const counts = langs.reduce((acc,l) => { acc[l] = (acc[l]||0)+1; return acc; }, {});
+    const ctx2 = document.getElementById('langChart').getContext('2d');
+    langChart = new Chart(ctx2, {
+      type: 'doughnut',
+      data: { labels: Object.keys(counts), datasets: [{ data: Object.values(counts), backgroundColor: ['#6366f1','#a855f7','#10b981','#f59e0b'] }] }
+    });
+  }
+
+  async function askAdvisor() {
+    const q = document.getElementById('advisorInput').value;
+    if (!q) return;
+    const responseEl = document.getElementById('advisorResponse');
+    responseEl.textContent = 'Thinking...';
+    // Build context from profile stats
+    const orders = await sb.from('orders').select('*').eq('merchant_id', userId);
+    const totalRev = orders.data.reduce((s,o)=>s+Number(o.total_price),0);
+    const orderCount = orders.data.length;
+    const leads = await sb.from('leads').select('*').eq('merchant_id', userId).eq('converted', false);
+    const leadCount = leads.data.length;
+
+    const systemPrompt = `You are an expert e‑commerce business consultant. 
+Merchant: ${profile.store_name}
+Total revenue: ${totalRev} MAD
+Orders: ${orderCount}
+Abandoned carts: ${leadCount}
+Provide actionable advice. Be concise.`;
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: q }
+    ];
+
+    try {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${BCHAT_CONFIG.GROQ_API_KEY}` },
+        body: JSON.stringify({ model: BCHAT_CONFIG.GROQ_MODEL, messages, max_tokens: 500 })
+      });
+      const data = await resp.json();
+      responseEl.textContent = data.choices?.[0]?.message?.content || 'No response';
+    } catch(e) {
+      responseEl.textContent = 'Error: ' + e.message;
+    }
+  }
+</script>
+</body>
+</html>
