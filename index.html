@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>B-Chat Global — AI Sales Engine</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg: #07080f; --surface: rgba(255,255,255,.04); --border: rgba(255,255,255,.08);
+      --accent: #6366f1; --accent2: #a855f7; --text: #e2e8f0; --text-sub: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); }
+    h1,h2,h3 { font-family: 'Syne', sans-serif; }
+    .glass { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); backdrop-filter: blur(12px); }
+    .modal-overlay { position: fixed; inset:0; background: rgba(0,0,0,.8); backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; z-index: 200; }
+    .modal-overlay.open { display: flex; }
+    .modal-box { background: #0d1117; border: 1px solid var(--border); border-radius: 24px; max-width: 420px; width: 100%; padding: 2rem; }
+    .form-input { width: 100%; padding: .7rem 1rem; border-radius: 12px; background: rgba(255,255,255,.05); border: 1px solid var(--border); color: #fff; margin-bottom: 1rem; }
+    .btn { padding: .7rem 1.5rem; border-radius: 12px; font-weight: 600; cursor: pointer; transition: all .2s; }
+    .btn-primary { background: linear-gradient(135deg, #6366f1, #a855f7); color: #fff; border: none; box-shadow: 0 0 30px rgba(99,102,241,.3); }
+  </style>
+</head>
+<body class="min-h-screen flex items-center justify-center" style="background: radial-gradient(ellipse at 30% 30%, rgba(99,102,241,.15), transparent 70%), var(--bg);">
+  <div class="glass rounded-3xl p-10 max-w-2xl text-center">
+    <h1 class="text-5xl font-black mb-4" style="font-family: 'Syne';">B-Chat <span class="bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Global</span></h1>
+    <p class="text-xl text-sub mb-8">AI Sales Engine · 7‑day free trial · $10/month</p>
+    <div class="flex gap-4 justify-center">
+      <button onclick="openModal('login')" class="btn btn-primary">Login</button>
+      <button onclick="openModal('register')" class="btn" style="background: rgba(255,255,255,.1); border:1px solid var(--border);">Sign Up</button>
+    </div>
+  </div>
+
+  <!-- Auth Modal -->
+  <div class="modal-overlay" id="authModal" onclick="if(event.target===this) closeModal()">
+    <div class="modal-box">
+      <h2 id="modalTitle" class="text-2xl font-bold mb-2">Welcome</h2>
+      <p id="modalSub" class="text-sub mb-6">Sign in to your account</p>
+      <div class="flex gap-2 mb-6">
+        <button onclick="switchTab('login')" id="tabLogin" class="flex-1 py-2 rounded-lg bg-indigo-600/20 text-indigo-300 font-semibold">Login</button>
+        <button onclick="switchTab('register')" id="tabRegister" class="flex-1 py-2 rounded-lg bg-white/5 text-sub font-semibold">Register</button>
+      </div>
+      <div id="loginForm">
+        <input class="form-input" type="email" id="loginEmail" placeholder="Email" />
+        <input class="form-input" type="password" id="loginPass" placeholder="Password" />
+        <button onclick="doLogin()" class="btn btn-primary w-full">Sign In</button>
+      </div>
+      <div id="registerForm" style="display:none;">
+        <input class="form-input" type="text" id="regStore" placeholder="Store Name" />
+        <input class="form-input" type="email" id="regEmail" placeholder="Email" />
+        <input class="form-input" type="password" id="regPass" placeholder="Password (min 6)" />
+        <button onclick="doRegister()" class="btn btn-primary w-full">Create Account & Start Trial</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const sb = createSupabase();
+    let currentTab = 'login';
+
+    function openModal(tab) { document.getElementById('authModal').classList.add('open'); switchTab(tab); }
+    function closeModal() { document.getElementById('authModal').classList.remove('open'); }
+    function switchTab(tab) {
+      currentTab = tab;
+      document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
+      document.getElementById('registerForm').style.display = tab === 'register' ? 'block' : 'none';
+      document.getElementById('tabLogin').classList.toggle('bg-indigo-600/20', tab==='login');
+      document.getElementById('tabLogin').classList.toggle('text-indigo-300', tab==='login');
+      document.getElementById('tabLogin').classList.toggle('bg-white/5', tab!=='login');
+      document.getElementById('tabLogin').classList.toggle('text-sub', tab!=='login');
+      document.getElementById('tabRegister').classList.toggle('bg-indigo-600/20', tab==='register');
+      document.getElementById('tabRegister').classList.toggle('text-indigo-300', tab==='register');
+      document.getElementById('tabRegister').classList.toggle('bg-white/5', tab!=='register');
+      document.getElementById('tabRegister').classList.toggle('text-sub', tab!=='register');
+    }
+
+    async function doLogin() {
+      const email = document.getElementById('loginEmail').value.trim();
+      const pass = document.getElementById('loginPass').value;
+      const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+      if (error) { alert(error.message); return; }
+      window.location.href = 'dashboard.html';
+    }
+
+    async function doRegister() {
+      const store = document.getElementById('regStore').value.trim();
+      const email = document.getElementById('regEmail').value.trim();
+      const pass = document.getElementById('regPass').value;
+      if (!store || !email || pass.length < 6) { alert('Please fill all fields (password min 6)'); return; }
+      const { data, error } = await sb.auth.signUp({
+        email, password: pass,
+        options: { data: { store_name: store } }
+      });
+      if (error) { alert(error.message); return; }
+      // After signup, update profile with trial dates
+      const user = data.user;
+      if (user) {
+        const now = new Date();
+        const sub_end = new Date(now.setDate(now.getDate() + 7)).toISOString(); // 7-day trial
+        await sb.from('profiles').update({
+          store_name: store,
+          sub_end_date: sub_end,
+          message_balance: 1000
+        }).eq('id', user.id);
+      }
+      window.location.href = 'dashboard.html';
+    }
+  </script>
+</body>
+</html>
